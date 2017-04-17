@@ -1,4 +1,6 @@
 #include "EmployeesArray.h"
+#include <cstring>
+#include <cstdlib>
 
 EmployeesArray::EmployeesArray() : _size(0), _cp(1) {
 	_employees = new Employee*[1];
