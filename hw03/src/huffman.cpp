@@ -1,74 +1,127 @@
+#include <iostream>
+#include <assert.h>
+#include "file_exceptions.h"
+#include "debug.h"
 #include "huffman.h"
 
-using std::size_t;
 using std::pair;
-using std::ifstream;
-using std::ofstream;
+using std::istream;
+using std::ostream;
 using std::string;
 using std::unordered_map;
+using std::vector;
 
-size_t get_char_freq(ifstream& ifs, unordered_map<char, size_t>& frequency_map) {
-    size_t file_size = 0;
-    char buffer[1000];
-    while (!ifs.eof()) {
-        ifs.read(buffer, sizeof(buffer));
-        file_size += (size_t) ifs.gcount();
-        for (size_t i = 0; i < (size_t) ifs.gcount(); i++)
-            frequency_map[buffer[i]]++;
-    }
-    return file_size;
+ostream& operator<<(ostream& os, const compression_statistics& statistics) {
+	os << statistics.uncompressed_file << "\n" << statistics.compressed_file << "\n"
+		<< statistics.additional_data << "\n";
+	return os;
+}
+
+bool operator==(const compression_statistics& rhs,
+	const compression_statistics& lhs) {
+	return rhs.compressed_file == lhs.compressed_file &&
+		rhs.uncompressed_file == lhs.uncompressed_file &&
+		rhs.additional_data == lhs.additional_data;
+}
+
+uint64_t original_file_size(const unordered_map<char,
+	uint64_t>& frequency_map) {
+	uint64_t file_size = 0;
+	for (auto char_and_freq : frequency_map) {
+		file_size += char_and_freq.second;
+	}
+	return file_size;
+}
+
+uint64_t additional_data_size(std::size_t freq_map_size) {
+	return sizeof(uint64_t) + freq_map_size * (sizeof(uint64_t) + sizeof(char));
+}
+
+unordered_map<char, uint64_t> count_char_freq(istream& ifs) {
+	if (!ifs)
+		throw fileException();
+	unordered_map<char, uint64_t> frequency_map;
+	while (ifs) {
+		char c;
+		ifs.read(&c, sizeof(c));
+		for (int i = 0; i < ifs.gcount(); i++)
+			frequency_map[c]++;
+	}
+	return frequency_map;
+}
+
+void deserialize_char_freq(ostream& ofs,
+	const unordered_map<char, uint64_t>& frequency_map) {
+	uint64_t size = frequency_map.size();
+	ofs.write(reinterpret_cast<char*>(&size), sizeof(size));
+	for (auto x : frequency_map) {
+		char c = x.first;
+		uint64_t freq = x.second;
+		ofs.write((&c), sizeof(c));
+		ofs.write(reinterpret_cast<char*>(&freq), sizeof(freq));
+	}
+}
+
+unordered_map<char, uint64_t> serialize_char_freq(istream& ifs) {
+	if (!ifs)
+		throw fileException();
+	unordered_map<char, uint64_t> frequency_map;
+	uint64_t size;
+	ifs.read(reinterpret_cast<char*>(&size), sizeof(size));
+	for (uint64_t i = 0; i < size; i++) {
+		char c;
+		ifs.read(&c, sizeof(c));
+		uint64_t freq;
+		ifs.read(reinterpret_cast<char*>(&freq), sizeof(freq));
+		frequency_map[c] = freq;
+	}
+	return frequency_map;
+}
+
+compression_statistics compress(istream& ifs, ostream& ofs) {
+	unordered_map<char, uint64_t> frequency_map = count_char_freq(ifs);
+	deserialize_char_freq(ofs, frequency_map);
+	HuffTree codes_tree(frequency_map);
+	BitOstream bit_ofs(ofs);
+	unordered_map<char, vector<bool> > codes = codes_tree.chars_to_code();
+	ifs.clear();
+	ifs.seekg(0, ifs.beg);
+	while (ifs) {
+		char c;
+		ifs.read(&c, sizeof(c));
+		bit_ofs << codes[c];
+	}
+	eprintf("file size %d, compressed size %d, additional data %d\n", (int)original_file_size(frequency_map), (int)bit_ofs.bytes_written(),
+		(int)additional_data_size(frequency_map.size()));
+	return{ original_file_size(frequency_map), bit_ofs.bytes_written(),
+		additional_data_size(frequency_map.size()) };
 }
 
 
-void HuffmanArchiver::zip() {
-    ifstream ifs(in_, ifstream::binary);
-    unordered_map<char, size_t> frequency_map;
-    size_t file_size = get_char_freq(ifs, frequency_map);
-    eprintf("hello?\n");
-    eprintf("input file size %d\n", (int)file_size);
-    HuffTree codes_tree(frequency_map);
-    codes_tree.calculate_codes();
-    BitOstream bitos(out_);
-    bitos.write(file_size);
-    bitos.write(codes_tree);
-    unordered_map<char, string> codes;
-    code(codes_tree, codes);
-    ifs.clear();
-    ifs.seekg(0, ifs.beg);
-    string code;
-    char buffer[1000];
-    while (!ifs.eof()) {
-        ifs.read(buffer, sizeof(buffer));
-        for (size_t i = 0; i < (size_t) ifs.gcount(); i++)
-            code += codes[buffer[i]];
-        bitos.push(code);
-    }
-}
-
-
-void read_tree(ifstream& ifs, unordered_map<char, size_t>& char_freq) {
-    size_t size;
-    ifs.read((char*)&size, sizeof(size_t));
-    eprintf("\n\nsize %d\n", (int)size);
-    for (size_t i = 0; i < size; i++) {
-        char c;
-        ifs.read(&c, sizeof(char));
-        size_t freq;
-        ifs.read((char*)&freq, sizeof(size_t));
-        char_freq[c] = freq;
-        eprintf("freq is %d and char is %c\n", (int)freq, c);
-    }
-}
-
-void HuffmanArchiver::unzip() {
-    ifstream ifs(in_, ifstream::binary);
-    size_t file_size;
-    ifs.read((char*)&file_size, sizeof(size_t));
-    unordered_map<char, size_t> char_freq;
-    read_tree(ifs, char_freq);
-    HuffTree codes_tree(char_freq);
-    codes_tree.calculate_codes();
-    unordered_map<string, char> keys;
-    decode(codes_tree, keys);
-    bit_stream(ifs, keys, out_, file_size);
+compression_statistics decompress(istream& ifs, ostream& ofs) {
+	unordered_map<char, uint64_t> frequency_map = serialize_char_freq(ifs);
+	uint64_t file_size = original_file_size(frequency_map);
+	HuffTree codes_tree(frequency_map);
+	unordered_map<vector<bool>, char> keys = codes_tree.codes_to_char();
+	BitIstream bit_ifs(ifs);
+	uint64_t written_bytes = 0;
+	if (frequency_map.size() == 1) { //if code is empty it is impossible to read it from file as it leads to fileFormatException
+		char c = (*frequency_map.begin()).first;
+		for (std::size_t i = 0; i < file_size; i++) {
+			ofs.write(&c, sizeof(c));
+		}
+	}
+	else {
+		auto keys_end = keys.end();
+		while (written_bytes < file_size) {
+			vector<bool> cur_code;
+			while (keys.find(cur_code) == keys_end) {
+				cur_code.push_back(bit_ifs.read_bit());
+			}
+			ofs.write(&keys[cur_code], sizeof(char));
+			written_bytes++;
+			eprintf("%c", keys[cur_code]);
+		}
+	}
+	return{ file_size, bit_ifs.bytes_read(), additional_data_size(frequency_map.size()) };
 }

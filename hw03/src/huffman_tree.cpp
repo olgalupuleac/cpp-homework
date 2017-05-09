@@ -3,119 +3,121 @@
 #include <utility>
 #include <fstream>
 #include "huffman_tree.h"
+#include "debug.h"
 
 
-using std::size_t;
 using std::pair;
 using std::unordered_map;
 using std::priority_queue;
-using std::ifstream;
-using std::ofstream;
+using std::istream;
+using std::ostream;
 using std::vector;
 using std::string;
 
-struct ComparTreeNode {
-    bool operator()(TreeNode* lhs, TreeNode* rhs) {
-        return (lhs->frequency() > rhs->frequency() || (
-            lhs->frequency() == rhs->frequency(
-            ) && lhs->character() > rhs->character()));
-    }
+struct TreeNodeComparator {
+	bool operator()(TreeNode* lhs, TreeNode* rhs) {
+		if (lhs->frequency() != rhs->frequency())
+			return  lhs->frequency() > rhs->frequency();
+		return lhs->id() > rhs->id();
+	}
 };
 
-TreeNode::TreeNode() : left_(NULL), right_(NULL), code_("") {}
-TreeNode::TreeNode(std::size_t frequency,
-    TreeNode* left, TreeNode* right, int character) :frequency_(
-    frequency), character_(character), left_(left), right_(right), code_("") {
-}
-TreeNode::TreeNode(std::size_t frequency, char character) :frequency_(
-    frequency), character_(character), left_(NULL), right_(NULL), code_("") {}
 
-std::size_t TreeNode::frequency() const {
-    return frequency_;
+TreeNode::TreeNode(TreeNode* left,
+	TreeNode* right, int id) :frequency_(
+		left->frequency_ + right->frequency_), id_(id), left_(left), right_(right) {
 }
+TreeNode::TreeNode(uint64_t frequency, char character) : frequency_(
+	frequency), id_(character), left_(NULL), right_(NULL) {}
 
-int TreeNode::character() const {
-    return character_;
+uint64_t TreeNode::frequency() const {
+	return frequency_;
 }
 
-string TreeNode::code() const {
-    return code_;
+int TreeNode::id() const {
+	return id_;
 }
 
+
+void TreeNode::calculate_codes() {
+	if (!left_)
+		return;
+	left_->code_ = code_;
+	right_->code_ = code_;
+	left_->code_.push_back(0);
+	right_->code_.push_back(1);
+	left_->calculate_codes();
+	right_->calculate_codes();
+}
+
+bool TreeNode::operator==(const TreeNode& other) const {
+	if (!left_)
+		return !other.left_ && other.id_ == id_ && other.frequency_ == frequency_;
+	if (!other.left_) 
+		return false;
+	return other.id_ == id_ && other.frequency_ == frequency_ && 
+		*left_ == *other.left_ && *right_ == *other.right_;
+}
+
+string TreeNode::codeForDebug() const {
+	string code;
+	for (bool c : code_)
+		code += std::to_string(c);
+	return code;
+}
 
 
 HuffTree::HuffTree(
-    const unordered_map<char, size_t>& char_frequency):leaf_num_(
-        char_frequency.size())
+	const unordered_map<char, uint64_t>& char_frequency) :leaf_num_(
+		char_frequency.size())
 {
-    assert(char_frequency.size() < 257);
-    tree_.reserve(2 * char_frequency.size() - 1);
-    for (pair<char, size_t> used_char : char_frequency) {
-        tree_.push_back(TreeNode(used_char.second, used_char.first));
-        assert(!tree_.back().left_ && !tree_.back().right_);
-        eprintf("adding in tree freq %d and char %c\n", (int)used_char.second, used_char.first);
-    }
-    priority_queue<TreeNode*, vector<TreeNode*>, ComparTreeNode> sorted_nodes;
-    for (size_t i = 0; i < leaf_num(); i++) {
-        sorted_nodes.push(&tree_[i]);
-    }
-    int char_id = 300; //differs new nodes in CompareTreeNode for correct decoding
-    while (sorted_nodes.size()) {
-        TreeNode* first = sorted_nodes.top();
-        eprintf("freq %d and char %c\n", (int)first->frequency_, first->character_);
-        sorted_nodes.pop();
-        if (sorted_nodes.empty()) break;
-        TreeNode* second = sorted_nodes.top();
-        eprintf("freq %d and char %c\n", (int)second->frequency_, second->character_);
-        sorted_nodes.pop();
-        TreeNode node(first->frequency() + second->frequency(), 
-            first, second, char_id++);
-        tree_.push_back(node);
-        eprintf("pushing new node\n");
-        eprintf("its code %s\n", node.code_.c_str());
-        sorted_nodes.push(&tree_.back());
-    }
+	assert(char_frequency.size() < 257);
+	tree_.reserve(2 * char_frequency.size());
+	for (pair<char, uint64_t> used_char : char_frequency) {
+		tree_.push_back(TreeNode(used_char.second, used_char.first));
+		assert(!tree_.back().left_ && !tree_.back().right_);
+		eprintf("adding in tree freq %d and char %c\n", (int)used_char.second, used_char.first);
+	}
+	priority_queue<TreeNode*, vector<TreeNode*>, TreeNodeComparator> sorted_nodes;
+	for (std::size_t i = 0; i < leaf_num_; i++) {
+		sorted_nodes.push(&tree_[i]);
+	}
+	int char_id = 1000; //differs new nodes in TreeNodeComparator for correct decoding
+	while (sorted_nodes.size()) {
+		TreeNode* first = sorted_nodes.top();
+		sorted_nodes.pop();
+		if (sorted_nodes.empty()) 
+			break;
+		TreeNode* second = sorted_nodes.top();
+		sorted_nodes.pop();
+		tree_.push_back(TreeNode(first, second, char_id++));
+		eprintf("pushing new node\n");
+		sorted_nodes.push(&tree_.back());
+	}
+	if(tree_.size())
+		tree_.back().calculate_codes();
 }
 
-void HuffTree::get_code(TreeNode* node) {
-    if (!node->left_) return;
-    eprintf("%c\n", node->left_->character_);
-    node->left_->code_ = node->code_ + '0';
-    node->right_->code_ = node->code_ + '1';
-    get_code(node->left_);
-    get_code(node->right_);
+
+unordered_map<char, vector<bool>> HuffTree::chars_to_code() const {
+	unordered_map<char, vector<bool> > codes;
+	for (std::size_t i = 0; i < leaf_num_; i++) {
+		codes[tree_[i].id()] = tree_[i].code_;
+	}
+	eprintf("all codes\n");
+	return codes;
 }
 
-void HuffTree::calculate_codes() {
-    eprintf("start coding\n");
-    get_code(&tree_.back());
+unordered_map<vector<bool>, char> HuffTree::codes_to_char() const {
+	unordered_map<vector<bool>, char> keys;
+	eprintf("leaf number %d\n", (int)leaf_num_);
+	for (std::size_t i = 0; i < leaf_num_; i++) {
+		keys[tree_[i].code_] = tree_[i].id();
+		eprintf("c %c code %s\n", tree_[i].id(), tree_[i].codeForDebug().c_str());
+	}
+	return keys;
 }
 
-std::size_t HuffTree::leaf_num() const {
-    return leaf_num_;
-}
-
-TreeNode* HuffTree::root() {
-    return &tree_.back();
-}
-
-std::pair<char, std::size_t> HuffTree::get(std::size_t i) const {
-    return std::make_pair(tree_[i].character(), tree_[i].frequency());
-}
-
-void code(HuffTree& tree, unordered_map<char, string>& codes) {
-    for (size_t i = 0; i < tree.leaf_num(); i++) {
-        eprintf("%c %s\n", tree.tree_[i].character(), tree.tree_[i].code().c_str());
-        codes[tree.tree_[i].character()] = tree.tree_[i].code();
-    }
-    eprintf("all codes\n");
-}
-
-void decode(HuffTree& tree, unordered_map<string, char>& keys) {
-    eprintf("leaf number %d\n", (int)tree.leaf_num());
-    for (size_t i = 0; i < tree.leaf_num(); i++) {
-        eprintf("%c %s\n", tree.tree_[i].character(), tree.tree_[i].code().c_str());
-        keys[tree.tree_[i].code()] = tree.tree_[i].character();
-    }
-        
+const TreeNode& HuffTree::root() const {
+	return tree_.back();
 }

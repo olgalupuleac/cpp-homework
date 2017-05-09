@@ -1,15 +1,6 @@
 #pragma once
 
-
-#include <cstdio>
-
-#ifdef DEBUG
-#define eprintf(...) fprintf(stderr, __VA_ARGS__)
-#else
-#define eprintf(...)
-#endif
-
-
+#include <cstdint>
 #include <string>
 #include <iostream>
 #include <vector>
@@ -19,41 +10,34 @@
 #include <cstdint>
 
 class HuffTree;
-void code(HuffTree& tree, std::unordered_map<char, std::string>& codes);
-void decode(HuffTree& tree, std::unordered_map<std::string, char>& keys);
+
 
 class TreeNode {
-    friend HuffTree;
+	friend HuffTree;
 private:
-    std::size_t frequency_;
-    int character_;
-    TreeNode* left_;
-    TreeNode* right_;
-    std::string code_;
+	uint64_t frequency_;
+	int id_;
+	TreeNode* left_;
+	TreeNode* right_;
+	std::vector<bool> code_;
 public:
-    TreeNode();
-    TreeNode(std::size_t frequency, TreeNode* left, TreeNode* right, int character);
-    TreeNode(std::size_t frequency, char character);
-    std::size_t frequency() const;
-    int character() const;
-    std::string code() const;
+	TreeNode(TreeNode* left, TreeNode* right, int id);
+	TreeNode(uint64_t frequency, char character);
+	uint64_t frequency() const;
+	int id() const;
+	void calculate_codes();
+	bool operator==(const TreeNode& other) const;
+	std::string codeForDebug() const;
 };
 
 
 class HuffTree {
-    friend void code(HuffTree& tree, std::unordered_map<char, std::string>& codes);
-    friend void decode(HuffTree& tree, std::unordered_map<std::string, char>& keys);
 private:
-    std::vector<TreeNode> tree_;
-    //HuffTree(const HuffTree& other){}
-    //HuffTree& operator=(const HuffTree other){}
-    std::size_t leaf_num_;
-    void get_code(TreeNode* node);
+	std::vector<TreeNode> tree_;
+	std::size_t leaf_num_;
 public:
-    HuffTree(){}
-    HuffTree(const std::unordered_map<char, std::size_t>& char_frequency);
-    void calculate_codes();
-    std::size_t leaf_num() const;
-    std::pair<char, std::size_t> get(std::size_t i) const;
-    TreeNode* root();
+	HuffTree(const std::unordered_map<char, uint64_t>& char_frequency);
+	std::unordered_map<char, std::vector<bool> > chars_to_code() const;
+	std::unordered_map<std::vector<bool>, char> codes_to_char() const;
+	const TreeNode& root() const; //for tests
 };

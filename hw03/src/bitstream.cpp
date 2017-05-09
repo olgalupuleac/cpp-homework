@@ -1,86 +1,102 @@
 #include <algorithm>
+#include <vector>
+#include <cstdint>
 #include <string.h>
+#include <assert.h>
+#include "file_exceptions.h"
 #include "bitstream.h"
+#include "debug.h"
 
-using std::size_t;
+
 using std::pair;
-using std::ifstream;
-using std::ofstream;
+using std::istream;
+using std::ostream;
 using std::string;
+using std::vector;
 
+const int BUFFER_SIZE = 10000;
 
-BitOstream::BitOstream(string filename) :pos(0), bit(0) {
-    ofs.open(filename, ofstream::binary);
+BitOstream::BitOstream(std::ostream& ofs) : bytes_written_(0),
+    ofs_(ofs), pos_(0), bit_(0) {
+	buffer_.resize(BUFFER_SIZE);
 }
 
-void BitOstream::push(std::string& data) {
-    for (char c : data) {
-        if (c == '1')
-            buffer[pos] |= (1 << bit);
-        bit++;
-        //eprintf("I'm working\n");
-        if (bit == 8) {
-            pos++;
-            bit = 0;
-            if (pos == sizeof(buffer) - 1) {
-                eprintf("flush\n");
-                ofs.write((char*)buffer, sizeof(buffer));
-                memset(buffer, 0, sizeof(buffer));
-                pos = 0;
-            }
-        }
-    }
+BitOstream& BitOstream::operator<<(bool bit) {
+	if (!bit_)
+		bytes_written_++;
+	if (bit)
+		buffer_[pos_] |= (1 << bit_);
+	bit_++;
+	if (bit_ == 8) {
+		bit_ = 0;
+		pos_++;
+		if (pos_ == buffer_.size()) {
+			flush();
+		}
+	}
+	return *this;
 }
 
-void BitOstream::write(const HuffTree& tree) {
-    size_t s = tree.leaf_num();
-    ofs.write((char*)&s, sizeof(size_t));
-    for (size_t i = 0; i < tree.leaf_num(); i++) {
-        pair<char, size_t> leaf = tree.get(i);
-        char c = leaf.first;
-        size_t freq = leaf.second;
-        ofs.write(&c, sizeof(char));
-        ofs.write((char*)&freq, sizeof(size_t));
-    }
+BitOstream& BitOstream::operator<<(const vector<bool>& data) {
+	for (bool bit : data)
+		*this << bit;
+	return *this;
 }
 
-void BitOstream::write(size_t& size) {
-    ofs.write((char*)&size, sizeof(size_t));
+
+void BitOstream::flush() {
+	if (bit_) {
+		pos_++;
+		bit_ = 0;
+	}
+    ofs_.write(&buffer_[0], pos_);
+	std::fill(buffer_.begin(), buffer_.end(), 0);
+	pos_ = 0;
 }
 
 BitOstream::~BitOstream() {
-    if (bit + pos) ofs.write((char*)buffer, pos + 1);
-    ofs.close();
+	flush();
+	eprintf("bitostream destructor\n");
 }
 
-void bit_stream(std::ifstream& ifs, std::unordered_map<string, char>& keys, std::string filename, std::size_t file_size) {
-    uint8_t read_buffer[1000];
-    string write_buffer;
-    string cur_code;
-    size_t num_to_read = file_size;
-    eprintf("\n\nfile size %d", (int)file_size);
-    ofstream ofs(filename, ofstream::binary);
-    while (!ifs.eof() && num_to_read) {
-        ifs.read((char*)read_buffer, sizeof(read_buffer));
-        for (size_t i = 0; i < (size_t) ifs.gcount(); i++) {
-            for (size_t bit = 0; bit < 8; bit++) {
-                cur_code += std::to_string((read_buffer[i] >> bit) & 1);
-                if (keys.find(cur_code) != keys.end()) {
-                    write_buffer += keys[cur_code];
-                    cur_code.clear();
-                }
-            }
-            if (write_buffer.size() > 1000) {
-                eprintf("flush %d bytes\n", (int)std::min(write_buffer.size(), num_to_read));
-                ofs.write(write_buffer.c_str(), std::min(write_buffer.size(), num_to_read));
-                if (num_to_read > write_buffer.size()) num_to_read -= write_buffer.size();
-                else {
-                    num_to_read = 0;
-                }
-                write_buffer.clear();
-            }
-        }
-        ofs.write(write_buffer.c_str(), std::min(write_buffer.size(), num_to_read));
-    }
-    
+uint64_t BitOstream::bytes_written() const {
+	return bytes_written_;
+}
+
+
+BitIstream::BitIstream(std::istream& ifs) :ifs_(ifs), bytes_read_(0) {
+	buffer_.resize(BUFFER_SIZE);
+	fill_buffer();
+}
+
+void BitIstream::fill_buffer() {
+	ifs_.read(&buffer_[0], buffer_.size());
+	bit_ = 0;
+	cur_pos_ = 0;
+	bytes_read_ += static_cast<uint64_t>(ifs_.gcount());
+	eprintf("fill buffer %d\n", (int)ifs_.gcount());
+}
+
+bool BitIstream::read_bit() {
+	if (!buffer_size()) 
+		throw fileFormatException();
+	assert(cur_pos_ < buffer_size());
+	bool res = (buffer_[cur_pos_] >> bit_) & 1;
+	eprintf("read bit %d\n", (int)res);
+	bit_++;
+	if (bit_ == 8) {
+		bit_ = 0;
+		cur_pos_++;
+		if (cur_pos_ >= buffer_size())
+			fill_buffer();
+	}
+	return res;
+}
+
+int BitIstream::buffer_size() const {
+	return static_cast<int>(ifs_.gcount());
+}
+
+uint64_t BitIstream::bytes_read() const {
+	return bytes_read_;
 }

@@ -2,20 +2,38 @@
 
 #include <iostream>
 #include <fstream>
-#include "huffman_tree.h"
+
+
+
 
 class BitOstream {
 private:
-    std::ofstream ofs;
-    uint8_t buffer[100000] = { 0 };
-    std::size_t pos;
-    std::size_t bit;
+	uint64_t bytes_written_;
+	std::ostream& ofs_;
+	std::vector<char> buffer_;
+	std::size_t pos_;
+    std::size_t bit_;
+	void flush();
 public:
-    BitOstream(std::string filename);
-    void push(std::string& data);
-    void write(const HuffTree& tree);
-    void write(std::size_t& size);
-    ~BitOstream();
+	BitOstream(std::ostream& ofs);
+	~BitOstream();
+	BitOstream& operator<<(bool bit);
+	BitOstream& operator<<(const std::vector<bool>& data);
+	uint64_t bytes_written() const;
 };
 
-void bit_stream(std::ifstream& ifs, std::unordered_map<std::string, char>& keys, std::string filename, std::size_t file_size);
+class BitIstream {
+private:
+	std::istream& ifs_;
+	std::vector<char> buffer_;
+	int cur_pos_;
+	int bit_;
+	uint64_t bytes_read_;
+	void fill_buffer();
+	int buffer_size() const;
+public:
+	BitIstream(std::istream& ifs);
+	bool read_bit();
+	uint64_t bytes_read() const;
+};
+
